@@ -1,0 +1,11 @@
+mmh3
+lz4
+psutil
+fastrand
+inotify
+msgpack
+tqdm
+six
+dynaconf==3.2.0
+appdirs
+PyYAML==6.0
