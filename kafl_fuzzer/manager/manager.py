@@ -28,7 +28,6 @@ from kafl_fuzzer.manager.bitmap import BitmapStorage
 from kafl_fuzzer.manager.node import QueueNode
 from kafl_fuzzer.technique.redqueen.cmp import redqueen_global_config
 from kafl_fuzzer.worker.execution_result import ExecutionResult
-from kafl_fuzzer.manager.playMaker import PlayMaker
 
 from kafl_fuzzer.technique.helper import helper_init
 
@@ -46,7 +45,6 @@ class ManagerTask:
         self.statistics = ManagerStatistics(config)
         self.queue = InputQueue(self.config, self.statistics)
         self.bitmap_storage = BitmapStorage(config, "main", read_only=False)
-        self.play_maker = PlayMaker(self.config.play_maker)
 
         helper_init()
 
@@ -59,7 +57,7 @@ class ManagerTask:
         logger.debug("Starting (pid: %d)" % os.getpid())
         dump_config()
 
-    def send_next_task(self, conn, play_maker=False):
+    def send_next_task(self, conn):
         # Inputs placed to imports/ folder have priority.
         # This can also be used to inject additional seeds at runtime.
         imports = glob.glob(self.config.workdir + "/imports/*")
@@ -72,7 +70,7 @@ class ManagerTask:
         # Process items from queue..
         node = self.queue.get_next()
         if node:
-            return self.comm.send_node(conn, {"type": "node", "nid": node.get_id(),"play_maker":play_maker})
+            return self.comm.send_node(conn, {"type": "node", "nid": node.get_id()})
 
         # No work in queue. Tell Worker to wait a little or attempt blind fuzzing.
         # If all Workers are waiting, check if we are getting any coverage..
@@ -80,7 +78,7 @@ class ManagerTask:
         self.busy_events +=1
         if self.busy_events >= self.config.processes:
             self.busy_events = 0
-            main_bitmap = bytes(self.bitmap_storage.get_bitmap_for_node_type("regular").c_bitmap)
+            main_bitmap = self.bitmap_storage.get_bitmap_for_node_type("regular").c_bitmap
             if mmh3.hash(main_bitmap) == self.empty_hash:
                 logger.warn("Coverage bitmap is empty?! Check -ip0 or try better seeds.")
 
@@ -91,22 +89,10 @@ class ManagerTask:
         while True:
             for conn, msg in self.comm.wait(self.statistics.plot_thres):
                 if msg["type"] == MSG_NODE_DONE:
-
-                    
                     # Worker execution done, update queue item + send new task
                     if msg["node_id"]:
                         self.queue.update_node_results(msg["node_id"], msg["results"], msg["new_payload"])
-
-                    if self.play_maker.use:
-                        if self.play_maker.toggle is False and time.time() - self.play_maker.last_find_time >= self.play_maker.time_limit:
-                            self.play_maker.on()
-
-                        if self.play_maker.toggle is True:
-                            self.send_next_task(conn, play_maker=True)
-                        else:
-                            self.send_next_task(conn)
-                    else:
-                        self.send_next_task(conn)
+                    self.send_next_task(conn)
                 elif msg["type"] == MSG_NODE_ABORT:
                     # Worker execution aborted, update queue item + DONT send new task
                     logger.warn(f"Worker {msg['worker_id']} sent ABORT..")
@@ -143,8 +129,7 @@ class ManagerTask:
         n_limit = self.config.abort_exec
 
         if t_limit:
-            # t_limit is minutes count
-            if t_limit*60 < time.time() - self.statistics.data['start_time']:
+            if t_limit*3600 < time.time() - self.statistics.data['start_time']:
                 raise SystemExit("Exit on timeout.")
         if n_limit:
             if n_limit < self.statistics.data['total_execs']:
@@ -168,42 +153,14 @@ class ManagerTask:
             backup_data = bitmap.copy_to_array()
 
         tmp_trace_file = info.get("pt_dump", None)
-        #print(f'aaaaaaaaaaaaaaaaaaaaaaa {info.get("qemu_id",None)}')
         should_store, new_bytes, new_bits = self.bitmap_storage.should_store_in_queue(bitmap)
         if should_store:
-
-            
             node_struct = {"info": info, "state": {"name": "initial"}}
             node = QueueNode(self.config, payload, bitmap_array, node_struct, write=False)
             node.set_new_bytes(new_bytes, write=False)
             node.set_new_bits(new_bits, write=False)
             self.queue.insert_input(node, bitmap)
             self.store_trace(node.get_id(), tmp_trace_file)
-
-            crash_log_qemu_id = info.get("qemu_id",None)
-
-            if crash_log_qemu_id and node.get_exit_reason()=="crash" and self.config.use_call_stack:
-                time.sleep(2)
-                #from kafl_fuzzer.common.color import FLUSH_LINE, FAIL, OKBLUE, ENDC
-
-                #PREFIX = FLUSH_LINE + FAIL
-                #logger.critical(PREFIX+f"crash log moving /tmp/kAFL_crash_call_stack_{crash_log_qemu_id} -> {self.config.workdir}/corpus/crash/{node.get_id()}_crash_log"+ENDC)
-                #logger.info(color.FAIL+ + color.ENDC)
-                #__get_payload_filename
-                #return "%s/corpus/%s/payload_%05d" % (workdir, exit_reason, node_id)
-                src = f"/tmp/kAFL_crash_call_stack_{crash_log_qemu_id}"
-                dst = self.config.workdir + "/corpus/crash/payload_%05d_crash_log"%(node.get_id())
-
-                if os.path.exists(src):
-                    shutil.move(src, dst)
-                else:
-                    pass
-
-                
-            ## trace last finding time to play maker
-            if self.play_maker.use and self.play_maker.toggle is False:
-                self.play_maker.last_find_time = time.time()
-            
             return
 
         if tmp_trace_file and os.path.exists(tmp_trace_file):

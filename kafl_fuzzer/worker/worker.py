@@ -21,7 +21,7 @@ import lz4.frame as lz4
 
 #from kafl_fuzzer.common.config import FuzzerConfiguration
 from kafl_fuzzer.common.rand import rand
-from kafl_fuzzer.common.util import atomic_write, serialize_sangjun, add_to_irp_list, serialize
+from kafl_fuzzer.common.util import atomic_write
 from kafl_fuzzer.manager.bitmap import BitmapStorage, GlobalBitmap
 from kafl_fuzzer.manager.communicator import ClientConnection, MSG_IMPORT, MSG_RUN_NODE, MSG_BUSY
 from kafl_fuzzer.manager.node import QueueNode
@@ -31,9 +31,6 @@ from kafl_fuzzer.worker.qemu import QemuIOException
 from kafl_fuzzer.worker.qemu import qemu as Qemu
 from kafl_fuzzer.common.logger import WorkerLogAdapter
 
-from kafl_fuzzer.common.color import FLUSH_LINE, FAIL, ENDC
-PREFIX = FLUSH_LINE + FAIL
-import copy
 def worker_loader(pid, config):
     worker = WorkerTask(pid, config)
     worker.start()
@@ -57,10 +54,6 @@ class WorkerTask:
         self.t_soft = config.timeout_soft
         self.t_check = config.timeout_check
         self.num_funky = 0
-        self.play_maker_mode = False
-
-    def play_maker_on(self):
-        self.play_maker_mode = True
 
     def handle_import(self, msg):
         meta_data = {"state": {"name": "import"}, "id": 0}
@@ -76,17 +69,20 @@ class WorkerTask:
 
     def handle_busy(self):
         busy_timeout = 4
-    
-        self.logger.info("No inputs in queue, sleeping %ds..", busy_timeout)
-        time.sleep(busy_timeout)
+        kickstart = self.config.kickstart
+
+        if kickstart:
+            self.logger.debug("No inputs in queue, attempting kickstart(%d)..", kickstart)
+            self.q.set_timeout(self.t_hard)
+            self.logic.process_kickstart(kickstart)
+        else:
+            self.logger.info("No inputs in queue, sleeping %ds..", busy_timeout)
+            time.sleep(busy_timeout)
         self.conn.send_ready()
 
     def handle_node(self, msg):
-        meta_data = QueueNode.get_metadata(self.config.workdir, msg["task"]["nid"])
-        payload = QueueNode.get_payload(self.config.workdir, meta_data)
-        play_maker = msg["task"]["play_maker"]
-        if play_maker and self.play_maker_mode is False:
-            self.play_maker_on()
+        meta_data: bytes = QueueNode.get_metadata(self.config.workdir, msg["task"]["nid"])
+        payload: bytes = QueueNode.get_payload(self.config.workdir, meta_data)
 
         # fixme: determine globally based on all seen regulars
         t_dyn = self.t_soft + 1.2 * meta_data["info"]["performance"]
@@ -163,73 +159,6 @@ class WorkerTask:
                 self.handle_busy()
             else:
                 raise ValueError("Unknown message type {}".format(msg))
-    def crash_validate(self,data, old_res):
-        payload_list = []
-        add_to_irp_list(payload_list, data)
-
-        
-        tmp_list = copy.deepcopy(payload_list)
-
-
-        retry = 4
-        for _ in range(retry):
-            payload, is_multi_irp = serialize(tmp_list)
-            exec_res = self.__execute(payload)
-
-            if not exec_res.is_crash():
-                return False
-            time.sleep(1)
-        return True
-
-
-    def quick_crash_diet(self,data, retry=0):
-        payload_list = []
-        add_to_irp_list(payload_list, data)
-
-        if len(payload_list)<5:
-            ret_payload, _ = serialize(payload_list)
-            return ret_payload, True
-        
-        if retry>5:
-            ret_payload, _ = serialize(payload_list)
-            return ret_payload, False
-
-        valid_array = [ True for i in range(len(payload_list))]
-
-        def get_validate_map(payload_list):
-            for i in range(len(payload_list)):
-
-                tmp_list = copy.deepcopy(payload_list)
-                tmp_list.pop(i)
-                payload, is_multi_irp = serialize(tmp_list)
-                exec_res = self.__execute(payload)
-                if exec_res.is_crash():
-                    valid_array[i] = False
-                else:
-                    valid_array[i] = True
-                tmp_list.clear()
-            return payload_list
-
-
-
-        get_validate_map(payload_list)
-        
-        refined_list = []
-        for i in range(len(payload_list)):
-            if valid_array[i]:
-                refined_list.append(payload_list[i])
-        
-        payload, is_multi_irp = serialize(refined_list)
-        exec_res = self.__execute(payload)
-        
-        if not exec_res.is_crash():
-            return self.quick_crash_diet(data, retry=retry+1)
-        else:
-            #self.logger.critical(PREFIX+f"[+] DEBUG {valid_array}"+ENDC)
-            ret_payload, _ = serialize(refined_list)
-            return ret_payload, True
-        
-
 
     def quick_validate(self, data, old_res, trace=False):
         # Validate in persistent mode. Faster but problematic for very funky targets
@@ -304,12 +233,12 @@ class WorkerTask:
         old_bits = old_node["new_bytes"].copy()
         return GlobalBitmap.all_new_bits_still_set(old_bits, new_bitmap)
 
-    def execute_redqueen(self, headers, data):
+    def execute_redqueen(self, data):
         # execute in trace mode, then restore settings
         # setting a timeout seems to interfere with tracing
         self.statistics.event_exec_redqueen()
         self.q.qemu_aux_buffer.set_redqueen_mode(True)
-        exec_res = self.execute_naked(headers, data, timeout=0)
+        exec_res = self.execute_naked(data, timeout=0)
         self.q.qemu_aux_buffer.set_redqueen_mode(False)
         return exec_res
 
@@ -369,16 +298,16 @@ class WorkerTask:
 
         return exec_res
 
-    def execute_naked(self, headers, datas, timeout=None):
+    def execute_naked(self, data, timeout=None):
 
-        if len(datas) > self.payload_limit:
-            datas = datas[:self.payload_limit]
+        if len(data) > self.payload_limit:
+            data = data[:self.payload_limit]
 
         if timeout:
             old_timeout = self.q.get_timeout()
             self.q.set_timeout(timeout)
-        payload, is_multi_irp = serialize_sangjun(headers, datas)
-        exec_res = self.__execute(payload)
+
+        exec_res = self.__execute(data)
 
         if timeout:
             self.q.set_timeout(old_timeout)
@@ -394,10 +323,6 @@ class WorkerTask:
     def __execute(self, data, retry=0):
 
         try:
-            # if os.path.exists(f"/tmp/kAFL_crash_call_stack_{self.q.process.pid}"):
-            #     os.remove(f"/tmp/kAFL_crash_call_stack_{self.q.process.pid}")
-            #     #str(self.q.process.pid)
-            #     time.sleep(0.3)
             self.q.set_payload(data)
             res = self.q.send_payload()
             self.statistics.event_exec(bb_cov=self.q.bb_seen, trashed=res.trashed)
@@ -415,14 +340,14 @@ class WorkerTask:
         return self.__execute(data, retry=retry+1)
 
 
-    def execute(self, data, info, hard_timeout=False, is_multi_irp=False):
+    def execute(self, data, info, hard_timeout=False):
 
         if len(data) > self.payload_limit:
             data = data[:self.payload_limit]
 
         exec_res = self.__execute(data)
 
-        is_new_input, is_new_bytes = self.bitmap_storage.should_send_to_manager(exec_res, exec_res.exit_reason)
+        is_new_input = self.bitmap_storage.should_send_to_manager(exec_res, exec_res.exit_reason)
         crash = exec_res.is_crash()
         stable = False
 
@@ -430,18 +355,18 @@ class WorkerTask:
         # if both -trace and -trace_cb is provided, we must delay tracing to calibration stage
         trace_pt = self.config.trace and not self.config.trace_cb
 
-        if is_multi_irp and is_new_input and exec_res.exit_reason == "regular":
-            is_new_input = is_new_bytes
-            
         # store crashes and any validated new behavior
         # do not validate timeouts and crashes at this point as they tend to be nondeterministic
         if is_new_input:
             if not crash:
                 assert exec_res.is_lut_applied()
 
-
-                stable, runtime = self.quick_validate(data, exec_res, trace=trace_pt)
-                exec_res.performance = (exec_res.performance + runtime)/2
+                if self.config.funky:
+                    stable, runtime = self.funky_validate(data, exec_res, trace=trace_pt)
+                    exec_res.performance = runtime
+                else:
+                    stable, runtime = self.quick_validate(data, exec_res, trace=trace_pt)
+                    exec_res.performance = (exec_res.performance + runtime)/2
 
                 if trace_pt and stable:
                     trace_in = "%s/pt_trace_dump_%d" % (self.config.workdir, self.pid)
@@ -449,7 +374,6 @@ class WorkerTask:
                         with tempfile.NamedTemporaryFile(delete=False,dir=self.config.workdir + "/traces") as f:
                             shutil.move(trace_in, f.name)
                             info['pt_dump'] = f.name
-
                 if not stable:
                     # TODO: auto-throttle persistent runs based on funky rate?
                     self.logger.debug("Input validation failed! Target funky?..")
@@ -477,48 +401,8 @@ class WorkerTask:
             if crash and self.config.log_crashes:
                 self.q.store_crashlogs(exec_res.exit_reason, exec_res.hash())
 
-            if stable:
+            if crash or stable:
                 self.__send_to_manager(data, exec_res, info)
-            elif crash:
-                self.logger.critical(PREFIX+"[+] crash found"+ENDC)
-                info['qemu_id'] = str(self.q.process.pid)
-                if self.config.use_call_stack:
-                    self.__send_to_manager(data, exec_res, info)
-                else:
-                    if self.crash_validate(data, exec_res) is True:
-                        
-                        self.logger.critical(PREFIX+"[+] crash validate success"+ENDC)
-                        #print("crash validate success")
-                        self.store_funky(data)
-
-                        
-                        refined_data, diet_error = self.quick_crash_diet(data)
-
-                        if diet_error:
-                            self.logger.critical(PREFIX+"[+] diet success"+ENDC)
-                            self.__send_to_manager(refined_data, exec_res, info)
-                        elif diet_error is False:
-                            self.logger.critical(PREFIX+"[-] but there is diet error"+ENDC)
-                            #print('there is diet error')
-                            self.__send_to_manager(data, exec_res, info)
-                        else:
-                            assert(0==1), self.logger.critical(PREFIX+"[-] this code never be executed"+ENDC)
-                    else:
-                        ## it is not crash ##
-                        self.store_funky(data)
-                        is_new_input = False
-                        exec_res.exit_reason = "regular"
-                        self.logger.critical(PREFIX+"[-] crash validate failed"+ENDC)
-                        return exec_res, is_new_input
-                    # else:
-                    #     self.__send_to_manager(data, exec_res, info)
-            elif exec_res.exit_reason == "timeout":
-                return exec_res, is_new_input
-            
-            elif exec_res.exit_reason == 'regular':
-                return exec_res, is_new_input
-            else:
-                assert(0==1),self.logger.critical("[-] this code region never be executed")
 
         # restart Qemu on crash
         if crash:

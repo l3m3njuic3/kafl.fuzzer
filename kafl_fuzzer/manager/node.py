@@ -9,8 +9,8 @@ Fuzz inputs are managed as nodes in a queue. Any persistent metadata is stored h
 
 import lz4.frame
 import msgpack
-import os
-from kafl_fuzzer.common.util import read_binary_file, atomic_write, parse_all
+
+from kafl_fuzzer.common.util import read_binary_file, atomic_write
 
 
 class QueueNode:
@@ -20,8 +20,7 @@ class QueueNode:
         self.node_struct = node_struct
         self.busy = False
         self.workdir = config.workdir
-        self.config = config
-        self.dependency_dir = self.workdir+"/dependency"
+
         self.set_id(QueueNode.NextID, write=False)
         QueueNode.NextID += 1
 
@@ -35,21 +34,16 @@ class QueueNode:
         self.set_state("initial", write=False)
 
     @staticmethod
-    def get_metadata(workdir, node_id):
+    def get_metadata(workdir, node_id) -> bytes:
         return msgpack.unpackb(read_binary_file(QueueNode.__get_metadata_filename(workdir, node_id)), strict_map_key=False)
 
     @staticmethod
-    def get_payload(workdir, node_struct):
+    def get_payload(workdir, node_struct) -> bytes:
         return read_binary_file(QueueNode.__get_payload_filename(workdir, node_struct['info']['exit_reason'], node_struct['id']))
 
     @staticmethod
     def __get_payload_filename(workdir, exit_reason, node_id):
         return "%s/corpus/%s/payload_%05d" % (workdir, exit_reason, node_id)
-
-    @staticmethod
-    def __get_depend_payload_filename(target_dir, exit_reason, node_id):
-        return "%s/payload_%05d" % (target_dir, node_id)
-    
 
     @staticmethod
     def __get_metadata_filename(workdir, node_id):
@@ -96,24 +90,7 @@ class QueueNode:
     def set_payload(self, payload, write=True):
         self.set_payload_len(len(payload), write=False)
         atomic_write(QueueNode.__get_payload_filename(self.workdir, self.get_exit_reason(), self.get_id()), payload)
-        #(f"new payload is {payload}")
-        if self.config.play_maker:
-            irp_list = parse_all(payload)
 
-            # iterator irp_list and if there is an dependency folders, push the payload to there
-            for irp in irp_list:
-                ioctl_code = irp.IoControlCode
-                if os.path.exists(self.dependency_dir+"/"+hex(ioctl_code)) and self.get_exit_reason()=="regular":
-                     atomic_write(QueueNode.__get_depend_payload_filename(self.dependency_dir+"/"+hex(ioctl_code), self.get_exit_reason(), self.get_id()), payload)
-                else:
-                    pass
-
-
-            #atomic_write(QueueNode.__get_payload_filename(self.workdir, self.get_exit_reason(), self.get_id()), payload)
-        # TODO Add new payload files to dependency folders when play makers on
-        # settings.play_maker -> can know this options is ON
-        # Need to Exists check first
-        
     def get_payload_len(self):
         return self.node_struct["payload_len"]
 

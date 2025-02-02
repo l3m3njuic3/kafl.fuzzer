@@ -8,22 +8,12 @@ AFL-style 'interesting values' mutations (deterministic stage).
 """
 
 from kafl_fuzzer.technique.helper import *
-from kafl_fuzzer.common.util import MAX_INTERESTING_SIZE
-
-def mutate_seq_8_bit_interesting(irp_list, index, func, skip_null=False, effector_map=None, verbose=False):
-    data = irp_list[index].InBuffer
-    InBufferLength = irp_list[index].InBuffer_length
-
-    if InBufferLength == 0: return
 
 
-    # limit walking bits up to MAX_WALKING_BITS_SIZE.
-    start, end = 0, InBufferLength
-    if end > MAX_INTERESTING_SIZE:
-        end = MAX_INTERESTING_SIZE
+def mutate_seq_8_bit_interesting(data, func, skip_null=False, effector_map=None, verbose=False):
 
     label="afl_int_1"
-    for i in range(start, end):
+    for i in range(0, len(data)):
         if effector_map:
             if not effector_map[i]:
                 continue
@@ -38,25 +28,15 @@ def mutate_seq_8_bit_interesting(irp_list, index, func, skip_null=False, effecto
             if (is_not_bitflip(orig ^ value) and
                 is_not_arithmetic(orig, value, 1)):
                     data[i] = value
-                    func(irp_list, label=label)
+                    func(data, label=label)
 
         data[i] = orig
 
 
-def mutate_seq_16_bit_interesting(irp_list, index, func, skip_null=False, effector_map=None, arith_max=AFL_ARITH_MAX, verbose=False):
-    data = irp_list[index].InBuffer
-    InBufferLength = irp_list[index].InBuffer_length
-
-    if InBufferLength == 0: return
-
-
-    # limit walking bits up to MAX_WALKING_BITS_SIZE.
-    start, end = 0, InBufferLength
-    if end > MAX_INTERESTING_SIZE:
-        end = MAX_INTERESTING_SIZE
+def mutate_seq_16_bit_interesting(data, func, skip_null=False, effector_map=None, arith_max=AFL_ARITH_MAX, verbose=False):
 
     label="afl_int_2"
-    for i in range(start, end - 1):
+    for i in range(len(data) - 1):
         if effector_map:
             if not effector_map[i] and not effector_map[i+1]:
                 continue
@@ -75,32 +55,22 @@ def mutate_seq_16_bit_interesting(irp_list, index, func, skip_null=False, effect
                 is_not_arithmetic(oval, num1, 2, arith_max=arith_max) and
                 is_not_interesting(oval, num1, 2, 0)):
                     struct.pack_into("<H", data, i, num1)
-                    func(irp_list, label=label)
+                    func(data, label=label)
 
             if (num1 != num2 and
                 is_not_bitflip(oval ^ num2) and
                 is_not_arithmetic(oval, num2, 2, arith_max=arith_max) and
                 is_not_interesting(oval, num2, 2, 1)):
                     struct.pack_into(">H", data, i, num1)
-                    func(irp_list, label=label)
+                    func(data, label=label)
 
         data[i:i+2] = orig
 
 
-def mutate_seq_32_bit_interesting(irp_list, index, func, skip_null=False, effector_map=None, arith_max=AFL_ARITH_MAX, verbose=False):
-    data = irp_list[index].InBuffer
-    InBufferLength = irp_list[index].InBuffer_length
-
-    if InBufferLength == 0: return
-
-
-    # limit walking bits up to MAX_WALKING_BITS_SIZE.
-    start, end = 0, InBufferLength
-    if end > MAX_INTERESTING_SIZE:
-        end = MAX_INTERESTING_SIZE
+def mutate_seq_32_bit_interesting(data, func, skip_null=False, effector_map=None, arith_max=AFL_ARITH_MAX, verbose=False):
 
     label="afl_int_4"
-    for i in range(start, end - 3):
+    for i in range(len(data) - 3):
         if effector_map:
             if effector_map[i:i+4] == bytes(4):
                 continue
@@ -120,12 +90,12 @@ def mutate_seq_32_bit_interesting(irp_list, index, func, skip_null=False, effect
                 is_not_arithmetic(oval, num1, 4, arith_max=arith_max) and
                 is_not_interesting(oval, num1, 4, 0)):
                     struct.pack_into("<I", data, i, num1)
-                    func(irp_list, label=label)
+                    func(data, label=label)
 
             if (num1 != num2 and is_not_bitflip(oval ^ num2) and
                 is_not_arithmetic(oval, num2, 4, arith_max=arith_max) and
                 is_not_interesting(oval, num2, 4, 1)):
                     struct.pack_into("<I", data, i, num2)
-                    func(irp_list, label=label)
+                    func(data, label=label)
 
         data[i:i+4] = orig

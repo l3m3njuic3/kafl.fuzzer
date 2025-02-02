@@ -9,7 +9,7 @@ AFL-style havoc mutations (havoc stage)
 
 import logging
 from kafl_fuzzer.common.rand import rand
-from kafl_fuzzer.common.util import read_binary_file, find_diffs, parse_all, parse_payload
+from kafl_fuzzer.common.util import read_binary_file, find_diffs
 from kafl_fuzzer.technique.helper import *
 
 logger = logging.getLogger(__name__)
@@ -220,7 +220,7 @@ def havoc_perform_byte_seq_extra2(data):
     pass
 
 
-def havoc_splicing(data, files):
+def havoc_splicing(data: bytes, files):
     if len(data) < 2 or files is None:
         return data
 
@@ -228,22 +228,16 @@ def havoc_splicing(data, files):
     retry_limit = 64
 
     for file in files[:retry_limit]:
-        file_data = read_binary_file(file)
-        
-        candidates = parse_all(file_data)
-        target = rand.select(candidates)
-        #print(f"havoc_splicing {target}")
-        header, target_data = parse_payload(target)
-        #parse_payload
-        if len(target_data) < 2:
+        file_data: bytes = read_binary_file(file)
+        if len(file_data) < 2:
             continue
 
-        first_diff, last_diff = find_diffs(data, target_data)
+        first_diff, last_diff = find_diffs(data, file_data)
         if last_diff < 2 or first_diff == last_diff:
             continue
 
         split_location = first_diff + rand.int(last_diff - first_diff)
-        return data[:split_location] + target_data[split_location:]
+        return data[:split_location] + file_data[split_location:]
 
     # none of the files are suitable
     return None

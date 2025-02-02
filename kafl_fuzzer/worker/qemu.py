@@ -11,6 +11,7 @@ import ctypes
 import mmap
 import os
 import socket
+import struct
 import subprocess
 import sys
 import time
@@ -121,6 +122,8 @@ class qemu:
             self.cmd.extend(["-drive", "file=" + self.config.qemu_image])
         if self.config.qemu_kernel:
             self.cmd.extend(["-kernel", self.config.qemu_kernel])
+            if self.config.qemu_append is None:
+                self.config.qemu_append = self.config.qemu_append_default
             if self.config.qemu_initrd:
                 self.cmd.extend(["-initrd", self.config.qemu_initrd])
         if self.config.qemu_bios:
@@ -528,9 +531,10 @@ class qemu:
         #if len(payload) > self.payload_limit:
         #    payload = payload[:self.payload_limit]
         try:
-            self.fs_shm.seek(0)
+            struct.pack_into("=I", self.fs_shm, 0, len(payload))
+            self.fs_shm.seek(4)
             self.fs_shm.write(payload)
-            self.fs_shm.flush()
+            #self.fs_shm.flush()
         except ValueError:
             if self.exiting:
                 sys.exit(0)

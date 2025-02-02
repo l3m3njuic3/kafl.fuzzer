@@ -1,20 +1,26 @@
-# MS Fuzz : 
-**MS Fuzzer** is coverage-guided Fuzzer that is targeting Windows Kernel Driver.
+<h1 align="center">
+  <br>kAFL-Fuzzer</br>
+</h1>
 
-## Feature
-- **MS Fuzzer** uses [_Intel PT_](https://www.intel.com/content/www/us/en/developer/videos/collecting-processor-trace-in-intel-system-debugger.html) to achieve code coverage. 
-- The **MS Fuzzer** follows an AFL-like design and can detect semi-stateful bugs.
-- **MS Fuzzer** is a well-designed fuzzer based on [_Nyx-Fuzzer_](https://nyx-fuzz.com) / [_kAFL_](https://github.com/IntelLabs/kAFL) and [_Redqueen_](https://github.com/RUB-SysSec/redqueen).
-- Designed to find bugs for windows Driver that interact with user with **DeviceIoControl**.
+<h3 align="center">
+HW-assisted Feedback Fuzzer for x86 VMs
+</h3>
 
-## Requirements
+<p align="center">
+  <a href="https://github.com/IntelLabs/kafl.fuzzer/actions/workflows/ci.yml">
+    <img src="https://github.com/IntelLabs/kafl.fuzzer/actions/workflows/ci.yml/badge.svg" alt="CI">
+  </a>
+  <a href="https://github.com/IntelLabs/kafl.fuzzer/releases">
+    <img alt="GitHub release (latest by date)" src="https://img.shields.io/github/v/release/IntelLabs/kafl.fuzzer">
+  </a>
+</p>
 
-- **Intel Skylake or later:** The setup requires a Gen-6 or newer Intel CPU (for
-  Intel PT) and adequate system memory (~2GB RAM per CPU)
 
-- **Patched Host Kernel:** A modified Linux host kernel will be installed as part
-  of the setup. Running kAFL inside a VM may work starting IceLake or later CPU.
+`Note: All components are provided for research and validation purposes only. Use at your own risk.`
 
-- **Ubuntu:** The installation and tutorials are
-  tested for recent Ubuntu 20.04.6 LTS.
+kAFL-Fuzzer is a AFL-like fuzzer written in Python. Originally published as just "kAFL"
+(and partly updated/rereleased as part of "Redqueen" and "Grimoire" projects) this project
+maintains the fuzzer frontend as a separate component for use with the newer
+libxdc/Qemu/KVM stack (aka. [Nyx backend](https://nyx-fuzz.com).
 
+For installation, usage and reporting issues, please refer to [kAFL](https://github.com/IntelLabs/kAFL).
